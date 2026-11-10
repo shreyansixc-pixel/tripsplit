@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TripSplit</title>
+<style>
+  :root { --bg:#f5f7f4; --ink:#1d2a24; --mute:#5e6d65; --line:#d5ddd7; --card:#ffffff; --accent:#1f6f54; --pos:#1f7a4d; --neg:#b3382c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16201b; --ink:#e8efe9; --mute:#9baba2; --line:#2c3b33; --card:#1d2a24; --accent:#5fc59b; --pos:#6fd19b; --neg:#ef8a7e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 Georgia, "Times New Roman", serif; }
+  main { max-width:980px; margin:0 auto; padding:28px 16px 64px; display:grid; gap:28px; grid-template-columns:300px 1fr; }
+  @media (max-width:800px) { main { grid-template-columns:1fr; } }
+  h1 { font-size:1.9rem; margin:0 0 4px; } h2 { font-size:1.15rem; margin:28px 0 10px; }
+  p.sub { margin:0 0 20px; color:var(--mute); }
+  form, .panel { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:16px; }
+  label { display:block; font:600 .85rem system-ui, sans-serif; margin:10px 0 4px; }
+  input, select, button { width:100%; font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--ink); }
+  button { cursor:pointer; background:var(--accent); color:#fff; border:0; margin-top:14px; font-family:system-ui, sans-serif; }
+  button.ghost { background:transparent; color:var(--neg); border:1px solid var(--neg); margin-top:8px; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .scroll { overflow-x:auto; } table { width:100%; border-collapse:collapse; font-family:system-ui, sans-serif; font-size:.9rem; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  td.x { padding:0; } td.x button { width:auto; margin:0; padding:2px 8px; background:transparent; color:var(--neg); }
+  .total { font-size:1.6rem; margin:12px 0 0; } .pos { color:var(--pos); } .neg { color:var(--neg); }
+  ul { list-style:none; padding:0; margin:0; } li { padding:8px 0; border-bottom:1px solid var(--line); }
+  .empty { color:var(--mute); }
+</style>
+</head>
+<body>
+<main>
+  <aside>
+    <h1>TripSplit</h1>
+    <p class="sub">Hostel and trip expenses, split fairly.</p>
+    <form id="form">
+      <label for="cat">Category</label>
+      <select id="cat"><option>Food</option><option>Transport</option><option>Utilities</option><option>Rent</option><option>Entertainment</option><option>Other</option></select>
+      <label for="title">Description</label><input id="title" placeholder="Domino's pizza, Uber" required>
+      <label for="payer">Paid by</label><input id="payer" placeholder="Shreya" required>
+      <label for="amount">Amount (₹)</label><input id="amount" type="number" min="0.01" step="0.01" required>
+      <label for="parts">Split between (comma-separated)</label><input id="parts" placeholder="Shreya, Riya, Aman" required>
+      <button type="submit">Add expense</button>
+    </form>
+    <button class="ghost" id="clear" type="button">Clear all history</button>
+  </aside>
+
+  <section id="out"></section>
+</main>
+
+<script>
+const KEY = "tripsplit.expenses";
+const cap = s => { s = s.trim(); return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase(); };
+const inr = n => "₹" + n.toFixed(2);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+let expenses = [];
+try { expenses = JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) { expenses = []; }
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(expenses)); } catch (e) {} };
+
+document.getElementById("form").addEventListener("submit", e => {
+  e.preventDefault();
+  const amount = parseFloat(document.getElementById("amount").value);
+  const parts = document.getElementById("parts").value.split(",").map(cap).filter(Boolean);
+  if (!(amount > 0) || !parts.length) return;
+  expenses.push({
+    id: Date.now(), category: document.getElementById("cat").value,
+    title: document.getElementById("title").value.trim(),
+    payer: cap(document.getElementById("payer").value), amount, participants: parts
+  });
+  save(); e.target.reset(); render();
+});
+
+document.getElementById("clear").addEventListener("click", () => {
+  if (expenses.length && confirm("Delete every expense?")) { expenses = []; save(); render(); }
+});
+
+function del(id) { expenses = expenses.filter(x => x.id !== id); save(); render(); }
+
+function render() {
+  const out = document.getElementById("out");
+  if (!expenses.length) { out.innerHTML = '<p class="empty">No expenses yet. Add the first one from the form.</p>'; return; }
+
+  const paid = {}, owed = {}, people = new Set();
+  let total = 0;
+  expenses.forEach(x => {
+    total += x.amount;
+    const share = x.amount / x.participants.length;
+    paid[x.payer] = (paid[x.payer] || 0) + x.amount; people.add(x.payer);
+    x.participants.forEach(p => { people.add(p); owed[p] = (owed[p] || 0) + share; });
+  });
+
+  const net = {};
+  const balRows = [...people].sort().map(p => {
+    const n = (paid[p] || 0) - (owed[p] || 0); net[p] = n;
+    const s = n > 0.005 ? `<span class="pos">Gets back ${inr(n)}</span>` : n < -0.005 ? `<span class="neg">Owes ${inr(-n)}</span>` : "Settled up";
+    return `<tr><td><b>${esc(p)}</b></td><td>${inr(paid[p] || 0)}</td><td>${inr(owed[p] || 0)}</td><td>${s}</td></tr>`;
+  }).join("");
+
+  const debtors = [], creditors = [];
+  Object.entries(net).forEach(([p, n]) => { if (n < -0.01) debtors.push([p, -n]); else if (n > 0.01) creditors.push([p, n]); });
+  debtors.sort((a, b) => b[1] - a[1]); creditors.sort((a, b) => b[1] - a[1]);
+  const pay = []; let d = 0, c = 0;
+  while (d < debtors.length && c < creditors.length) {
+    const amt = Math.min(debtors[d][1], creditors[c][1]);
+    pay.push(`<li><b>${esc(debtors[d][0])}</b> pays <b>${esc(creditors[c][0])}</b> ${inr(amt)}</li>`);
+    debtors[d][1] -= amt; creditors[c][1] -= amt;
+    if (debtors[d][1] < 0.01) d++;
+    if (creditors[c][1] < 0.01) c++;
+  }
+
+  const hist = expenses.map(x => `<tr><td><b>${esc(x.category)}</b></td><td>${esc(x.title)}</td><td>${esc(x.payer)}</td><td>${inr(x.amount)}</td><td>${esc(x.participants.join(", "))}</td><td class="x"><button type="button" aria-label="Delete ${esc(x.title)}" onclick="del(${x.id})">Delete</button></td></tr>`).join("");
+
+  out.innerHTML = `
+    <h2 style="margin-top:0">Expense history</h2>
+    <div class="panel scroll"><table><tr><th>Category</th><th>Description</th><th>Paid by</th><th>Amount</th><th>Split between</th><th></th></tr>${hist}</table>
+    <p class="total">${inr(total)} <span class="empty" style="font-size:.9rem">logged in total</span></p></div>
+    <h2>Balances</h2>
+    <div class="panel scroll"><table><tr><th>Person</th><th>Paid</th><th>Share</th><th>Net</th></tr>${balRows}</table></div>
+    <h2>Who owes who</h2>
+    <div class="panel">${pay.length ? `<ul>${pay.join("")}</ul>` : "<p class='pos' style='margin:0'>Everyone is settled up.</p>"}</div>`;
+}
+render();
+</script>
+</body>
+</html>
